@@ -20,14 +20,14 @@ spec:
     spec:
       containers:
       - name: app
-        image: ${ECR_URI}:${BUILD_NUMBER}
+        image: 603480426027.dkr.ecr.us-west-2.amazonaws.com/bluegreen-app:v1.0
         ports:
         - containerPort: 3000
         env:
         - name: ENVIRONMENT
           value: "blue"
         - name: APP_VERSION
-          value: "${BUILD_NUMBER}"
+          value: "v1.0"
         resources:
           requests:
             memory: "128Mi"
@@ -47,4 +47,3 @@ spec:
             port: 3000
           initialDelaySeconds: 5
           periodSeconds: 5
-

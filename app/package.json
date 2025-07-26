@@ -1,33 +1,16 @@
 {
-  "name": "bluegreen-demo-app",
+  "name": "bluegreen-app",
   "version": "1.0.0",
-  "description": "Demo application for blue-green deployment",
-  "main": "src/server.js",
+  "description": "Blue-Green Deployment Demo App",
+  "main": "app.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
-    "test": "jest",
-    "lint": "eslint src/"
+    "start": "node app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [
-    "nodejs",
-    "express",
-    "blue-green",
-    "kubernetes",
-    "jenkins"
-  ],
-  "author": "DevOps Team",
-  "license": "MIT",
   "dependencies": {
     "express": "^4.18.2"
   },
-  "devDependencies": {
-    "nodemon": "^2.0.20",
-    "jest": "^29.3.1",
-    "eslint": "^8.28.0"
-  },
-  "engines": {
-    "node": ">=16.0.0"
-  }
+  "keywords": ["blue-green", "deployment", "kubernetes"],
+  "author": "DevOps Team",
+  "license": "MIT"
 }
-
