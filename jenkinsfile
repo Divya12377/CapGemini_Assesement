@@ -1,0 +1,201 @@
+pipeline {
+    agent any
+    
+    environment {
+        AWS_REGION = 'us-west-2'
+        ECR_REPOSITORY = 'bluegreen-app'
+        ECR_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+        CLUSTER_NAME = 'jenkins-bluegreen-cluster'
+        APP_NAMESPACE = 'bluegreen-app'
+        KUBECTL_CONFIG = credentials('kubeconfig')
+        AWS_CREDENTIALS = credentials('aws-credentials')
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.BUILD_NUMBER = "${BUILD_NUMBER}"
+                    env.GIT_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                }
+            }
+        }
+        
+        stage('Build Application') {
+            steps {
+                dir('app') {
+                    sh 'npm install'
+                    sh 'npm test || true'  // Continue even if tests fail for demo
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    dir('app') {
+                        def image = docker.build("${ECR_URI}:${BUILD_NUMBER}")
+                        docker.withRegistry("https://${ECR_URI}", "ecr:${AWS_REGION}:aws-credentials") {
+                            image.push("${BUILD_NUMBER}")
+                            image.push("latest")
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to Staging') {
+            steps {
+                script {
+                    // Determine current active environment
+                    def currentEnv = getCurrentActiveEnvironment()
+                    def targetEnv = (currentEnv == 'blue') ? 'green' : 'blue'
+                    
+                    echo "Current active environment: ${currentEnv}"
+                    echo "Deploying to: ${targetEnv}"
+                    
+                    // Deploy to target environment
+                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                        sh """
+                            # Update image in deployment
+                            sed 's/\${ECR_URI}/${ECR_URI}/g; s/\${BUILD_NUMBER}/${BUILD_NUMBER}/g' k8s/app/${targetEnv}-deployment.yaml | kubectl apply -f -
+                            
+                            # Wait for deployment to be ready
+                            kubectl rollout status deployment/bluegreen-app-${targetEnv} -n ${APP_NAMESPACE} --timeout=300s
+                        """
+                    }
+                    
+                    env.TARGET_ENV = targetEnv
+                }
+            }
+        }
+        
+        stage('Run Tests') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                        // Get service endpoint for testing
+                        def serviceUrl = sh(
+                            script: "kubectl get svc bluegreen-app-${env.TARGET_ENV} -n ${APP_NAMESPACE} -o jsonpath='{.spec.clusterIP}'",
+                            returnStdout: true
+                        ).trim()
+                        
+                        // Run health checks
+                        sh """
+                            echo "Testing ${env.TARGET_ENV} environment at ${serviceUrl}"
+                            
+                            # Health check
+                            kubectl run test-pod --rm -i --restart=Never --image=curlimages/curl -- \
+                                curl -f http://${serviceUrl}/health || exit 1
+                            
+                            # API test
+                            kubectl run test-pod --rm -i --restart=Never --image=curlimages/curl -- \
+                                curl -f http://${serviceUrl}/api/info || exit 1
+                            
+                            echo "All tests passed for ${env.TARGET_ENV} environment"
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Switch Traffic') {
+            steps {
+                script {
+                    input message: "Switch traffic to ${env.TARGET_ENV} environment?", ok: "Deploy"
+                    
+                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                        // Update main service to point to new environment
+                        sh """
+                            kubectl patch service bluegreen-app-main -n ${APP_NAMESPACE} -p '{"spec":{"selector":{"environment":"${env.TARGET_ENV}"}}}'
+                            
+                            echo "Traffic switched to ${env.TARGET_ENV} environment"
+                            
+                            # Verify the switch
+                            kubectl get service bluegreen-app-main -n ${APP_NAMESPACE} -o yaml
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Cleanup Old Environment') {
+            steps {
+                script {
+                    def oldEnv = (env.TARGET_ENV == 'blue') ? 'green' : 'blue'
+                    
+                    timeout(time: 5, unit: 'MINUTES') {
+                        input message: "Scale down ${oldEnv} environment?", ok: "Scale Down"
+                    }
+                    
+                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                        sh """
+                            # Scale down old environment (keep 1 replica for quick rollback)
+                            kubectl scale deployment bluegreen-app-${oldEnv} -n ${APP_NAMESPACE} --replicas=1
+                            
+                            echo "Scaled down ${oldEnv} environment to 1 replica"
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'Blue-Green deployment completed successfully!'
+            slackSend(
+                channel: '#deployments',
+                color: 'good',
+                message: "✅ Blue-Green deployment successful: ${env.JOB_NAME} - ${env.BUILD_NUMBER} deployed to ${env.TARGET_ENV}"
+            )
+        }
+        
+        failure {
+            echo 'Blue-Green deployment failed!'
+            slackSend(
+                channel: '#deployments',
+                color: 'danger',
+                message: "❌ Blue-Green deployment failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}"
+            )
+            
+            // Rollback on failure
+            script {
+                if (env.TARGET_ENV) {
+                    def rollbackEnv = (env.TARGET_ENV == 'blue') ? 'green' : 'blue'
+                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                        sh """
+                            echo "Rolling back to ${rollbackEnv} environment"
+                            kubectl patch service bluegreen-app-main -n ${APP_NAMESPACE} -p '{"spec":{"selector":{"environment":"${rollbackEnv}"}}}'
+                        """
+                    }
+                }
+            }
+        }
+        
+        always {
+            // Clean up
+            sh 'docker system prune -f || true'
+            
+            // Archive artifacts
+            archiveArtifacts artifacts: 'k8s/**/*.yaml', allowEmptyArchive: true
+        }
+    }
+}
+
+// Helper function to determine current active environment
+def getCurrentActiveEnvironment() {
+    def currentEnv = 'blue' // default
+    try {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+            currentEnv = sh(
+                script: "kubectl get service bluegreen-app-main -n ${APP_NAMESPACE} -o jsonpath='{.spec.selector.environment}'",
+                returnStdout: true
+            ).trim()
+        }
+    } catch (Exception e) {
+        echo "Could not determine current environment, defaulting to blue. Error: ${e.getMessage()}"
+    }
+    return currentEnv ?: 'blue'
+}

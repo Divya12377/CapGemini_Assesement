@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bluegreen-app-blue
+  namespace: bluegreen-app
+  labels:
+    app: bluegreen-app
+    environment: blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: bluegreen-app
+      environment: blue
+  template:
+    metadata:
+      labels:
+        app: bluegreen-app
+        environment: blue
+    spec:
+      containers:
+      - name: app
+        image: ${ECR_URI}:${BUILD_NUMBER}
+        ports:
+        - containerPort: 3000
+        env:
+        - name: ENVIRONMENT
+          value: "blue"
+        - name: APP_VERSION
+          value: "${BUILD_NUMBER}"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+

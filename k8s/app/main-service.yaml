@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bluegreen-app-main
+  namespace: bluegreen-app
+  labels:
+    app: bluegreen-app
+spec:
+  selector:
+    app: bluegreen-app
+    environment: blue  # Initially points to blue
+  ports:
+  - port: 80
+    targetPort: 3000
+    protocol: TCP
+  type: LoadBalancer

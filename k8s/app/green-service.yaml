@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bluegreen-app-green
+  namespace: bluegreen-app
+  labels:
+    app: bluegreen-app
+    environment: green
+spec:
+  selector:
+    app: bluegreen-app
+    environment: green
+  ports:
+  - port: 80
+    targetPort: 3000
+    protocol: TCP
+  type: ClusterIP
