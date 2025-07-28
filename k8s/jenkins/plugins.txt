@@ -1,0 +1,5 @@
+kubernetes:1.31.3
+workflow-aggregator:2.6
+aws-credentials:1.0.7
+docker-workflow:1.28
+pipeline-aws:1.43

@@ -6,27 +6,100 @@ metadata:
 data:
   jenkins.yaml: |
     jenkins:
-      systemMessage: "Jenkins configured automatically by Jenkins Configuration as Code plugin\n\n"
-      numExecutors: 2
+      systemMessage: "Jenkins configured for Blue/Green deployments"
+      numExecutors: 0
       mode: NORMAL
-      scmCheckoutRetryCount: 3
-      labelString: "master"
+      
+      clouds:
+      - kubernetes:
+          name: "kubernetes"
+          serverUrl: "https://kubernetes.default"
+          namespace: "jenkins"
+          jenkinsUrl: "http://jenkins.jenkins.svc.cluster.local:8080"
+          containerCap: 10
+          podRetention: never
+          templates:
+          - name: "bluegreen-agent"
+            label: "bluegreen-agent"
+            yaml: |
+              apiVersion: v1
+              kind: Pod
+              spec:
+                serviceAccountName: jenkins
+                securityContext:
+                  runAsUser: 0
+                  fsGroup: 1000
+                containers:
+                - name: node
+                  image: node:18
+                  command: ["cat"]
+                  tty: true
+                  securityContext:
+                    privileged: true
+                    runAsUser: 0
+                  resources:
+                    requests:
+                      memory: "512Mi"
+                      cpu: "500m"
+                    limits:
+                      memory: "1Gi"
+                      cpu: "1000m"
+                  volumeMounts:
+                    - name: docker-sock
+                      mountPath: /var/run/docker.sock
+                - name: docker
+                  image: docker:24.0
+                  command: ["cat"]
+                  tty: true
+                  securityContext:
+                    privileged: true
+                    runAsUser: 0
+                  resources:
+                    requests:
+                      memory: "512Mi"
+                      cpu: "500m"
+                    limits:
+                      memory: "1Gi"
+                      cpu: "1000m"
+                  volumeMounts:
+                    - name: docker-sock
+                      mountPath: /var/run/docker.sock
+                - name: kubectl
+                  image: bitnami/kubectl:1.29
+                  command: ["cat"]
+                  tty: true
+                  securityContext:
+                    runAsUser: 0
+                  resources:
+                    requests:
+                      memory: "256Mi"
+                      cpu: "300m"
+                    limits:
+                      memory: "512Mi"
+                      cpu: "500m"
+                volumes:
+                - name: docker-sock
+                  hostPath:
+                    path: /var/run/docker.sock
+                nodeSelector:
+                  node.kubernetes.io/instance-type: t3.medium
+                tolerations:
+                - key: "role"
+                  operator: "Equal"
+                  value: "jenkins-agent"
+                  effect: "NoSchedule"
       
     security:
       globalJobDslSecurityConfiguration:
         useScriptSecurity: false
-        
+      
     unclassified:
       location:
         adminAddress: "admin@example.com"
-        url: "http://jenkins.example.com:8080/"
+        url: "http://jenkins.jenkins.svc.cluster.local:8080/"
         
     tool:
       git:
         installations:
         - name: "Default"
           home: "git"
-      dockerTool:
-        installations:
-        - name: "Docker"
-          home: "/usr/bin/docker"

@@ -15,7 +15,26 @@ spec:
       labels:
         app: jenkins
     spec:
+      securityContext:
+        runAsUser: 0
+        fsGroup: 1000
       serviceAccountName: jenkins
+      initContainers:
+      - name: install-plugins
+        image: jenkins/jenkins:lts
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            jenkins-plugin-cli --plugins \
+              kubernetes:3898.v1d9c44b_12c28 \
+              workflow-aggregator:596.v8c21c963d92d \
+              git:5.2.0 \
+              docker-workflow:563.vd5d2e5c4007f \
+              pipeline-aws:1.48 \
+              configuration-as-code:1670.v564dc8b_982d0
+        volumeMounts:
+        - name: plugin-dir
+          mountPath: /usr/share/jenkins/ref/plugins
       containers:
       - name: jenkins
         image: jenkins/jenkins:lts
@@ -24,14 +43,17 @@ spec:
         - containerPort: 50000
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "500m"
-          limits:
             memory: "2Gi"
             cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
         env:
         - name: JAVA_OPTS
-          value: "-Djenkins.install.runSetupWizard=false"
+          value: "-Djenkins.install.runSetupWizard=false -Dorg.jenkinsci.plugins.durabletask.BourneShellScript.HEARTBEAT_CHECK_INTERVAL=86400"
+        securityContext:
+          privileged: true
+          runAsUser: 0
         volumeMounts:
         - name: jenkins-home
           mountPath: /var/jenkins_home
@@ -39,12 +61,22 @@ spec:
           mountPath: /var/run/docker.sock
         - name: jenkins-config
           mountPath: /var/jenkins_home/casc_configs
+        - name: plugin-dir
+          mountPath: /usr/share/jenkins/ref/plugins
+        - name: aws-config
+          mountPath: /var/jenkins_home/.aws
       volumes:
       - name: jenkins-home
-        emptyDir: {}
+        persistentVolumeClaim:
+          claimName: jenkins-pvc
       - name: docker-sock
         hostPath:
           path: /var/run/docker.sock
       - name: jenkins-config
         configMap:
           name: jenkins-config
+      - name: plugin-dir
+        emptyDir: {}
+      - name: aws-config
+        secret:
+          secretName: jenkins-aws-credentials
