@@ -161,4 +161,3 @@ def getCurrentActiveEnvironment() {
     }
     return currentEnv ?: 'blue'
 }
-
